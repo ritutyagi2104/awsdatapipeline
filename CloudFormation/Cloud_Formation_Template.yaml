@@ -1,0 +1,133 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: iatademoritu
+      AccessControl: Private
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: unzipped/
+                  - Name: suffix
+                    Value: .csv
+            Function: !GetAtt [ Convert2ParquetLambdaFunc, Arn]
+  S3AccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: TestS3AccessRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: S3AccessPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - s3:*
+            Resource:
+            - arn:aws:s3:::iatademoritu
+            - arn:aws:s3:::iatademoritu/*
+  InvokePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: Convert2ParquetLambdaFunc
+    Properties:
+      FunctionName:
+        Fn::GetAtt:
+          - Convert2ParquetLambdaFunc
+          - Arn
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn:
+        Fn::Sub: arn:aws:s3:::iatademoritu
+  UnzipLambdaFunc:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Role: arn:aws:iam::767398131832:role/TestS3AccessRole
+      FunctionName: iata_awsdp_func_unzipfile
+      Runtime: python3.12
+      Timeout: 600
+      MemorySize: 2048
+      Code:
+        S3Bucket: awsdpsrc
+        S3Key: code/deployment_package_download_unzip.zip
+  Convert2ParquetLambdaFunc:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Role: arn:aws:iam::767398131832:role/TestS3AccessRole
+      FunctionName: iata_awsdp_fnc_convert_to_parquet
+      Runtime: python3.12
+      Timeout: 600
+      MemorySize: 2048
+      Code:
+        S3Bucket: awsdpsrc
+        S3Key: code/deployment_package_1.zip
+
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: iata_glue_db
+        Description: Glue Database
+
+  GlueTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: iata_read_sales
+        Description: Glue Table
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: parquet
+        StorageDescriptor:
+          Columns:
+            - Name: region
+              Type: string
+            - Name: item_type
+              Type: string
+            - Name: sales_channel
+              Type: string
+            - Name: order_priority
+              Type: string
+            - Name: order_date
+              Type: string
+            - Name: order_id
+              Type: int
+            - Name: ship_date
+              Type: string
+            - Name: units_sold
+              Type: int
+            - Name: unit_price
+              Type: double
+            - Name: unit_cost
+              Type: double
+            - Name: total_revenue
+              Type: double
+            - Name: total_cost
+              Type: double
+            - Name: total_profit
+              Type: double
+          Location: s3://iatademoritu/curated/
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+          StoredAsSubDirectories: false
+        PartitionKeys: 
+          - Name: country
+            Type: string
